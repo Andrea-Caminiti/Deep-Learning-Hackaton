@@ -9,9 +9,10 @@ import numpy as np
 from source.loadData import GraphDataset, BatchedGraphDataset
 import os
 import pandas as pd
-from source.loss import NoisyCrossEntropyLoss
+from source.loss import NoisyCrossEntropyLoss, GCODLoss
 from tqdm import tqdm 
 from torch_geometric.utils import degree
+from sklearn.metrics import f1_score
 import gc
 
 def add_zeros(data):
@@ -21,14 +22,17 @@ def add_zeros(data):
 class G2SAGEConv(MessagePassing):
     def __init__(self, in_channels, edge_feat, p=1.0):
         super(G2SAGEConv, self).__init__(aggr='mean')
-        self.lin = nn.Linear(edge_feat, edge_feat)
+        self.lin = nn.Linear(edge_feat + in_channels, edge_feat)
         self.gating_linear = nn.Linear(in_channels, edge_feat)
         self.p = p
-
+        
     def forward(self, x, edge_index, edge_attr):
+
         out = self.propagate(edge_index, x=x, edge_attr=edge_attr)
-        out = self.lin(out)
-        out = F.relu(out)
+        
+        # Concatenate own node features with aggregated neighbors
+        combined = torch.cat([x, out], dim=-1)
+        combined = F.relu(self.lin(combined))
         
         tau_hat = torch.sigmoid(self.gating_linear(x))  # (N, F_out)
         
@@ -43,7 +47,7 @@ class G2SAGEConv(MessagePassing):
 
         tau = torch.tanh(tau_sum)
 
-        updated_x = (1 - tau) * x + tau * out
+        updated_x = (1 - tau) * x + tau * combined
         return updated_x
 
     def message(self, x_j, edge_attr):
@@ -88,11 +92,12 @@ def train(data_loader):
     return total_loss / len(data_loader)
 
 
-def evaluate(data_loader, calculate_accuracy=False):
+def evaluate(data_loader, calculate_metrics=False):
     model.eval()
     correct = 0
     total = 0
     predictions = []
+    gt = []
     with torch.no_grad():
         for data in data_loader:
             data = data.to(device)    
@@ -101,12 +106,14 @@ def evaluate(data_loader, calculate_accuracy=False):
             output = model(x, data.edge_index, data.edge_attr, data.batch)
             pred = output.argmax(dim=1)
             predictions.extend(pred.cpu().numpy())
-            if calculate_accuracy:
+            if calculate_metrics:
                 correct += (pred == data.y).sum().item()
                 total += data.y.size(0)
-    if calculate_accuracy:
+                gt.extend(data.y.cpu().numpy())
+    if calculate_metrics:
         accuracy = correct / total
-        return accuracy, predictions
+        f1 = f1_score(gt, predictions, average='weighted')
+        return f1, accuracy, predictions
     return predictions
 
 
@@ -122,7 +129,7 @@ def main(args):
         torch.cuda.manual_seed_all(seed)
     global model, optimizer, criterion, device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    print(device)
     # Parameters for the GCN model
     input_dim = 1
     edge_feat = 7
@@ -138,31 +145,37 @@ def main(args):
         test_dir_name = os.path.dirname(args.test_path).split(os.sep)[-1]
 
         if args.train_path:
-            num_epochs = 150 
-            for epoch in tqdm(range(num_epochs), desc=f'Training...', leave=False):            
-                with open(args.train_path, 'r') as f:
-                    length = len(f.readlines())
-                dataset_loss = []
-                dataset_acc = []
-                for i in tqdm(range(length//3000 + 1)):
-                    train_dataset = BatchedGraphDataset(args.train_path, i=i, transform=add_zeros)
-                    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-                    train_loss = train(train_loader)
-                    train_acc, _ = evaluate(train_loader, calculate_accuracy=True)
-                    dataset_loss.append(train_loss)
-                    dataset_acc.append(train_acc)
-                    del train_dataset, train_loader
-                    gc.collect()
-                if epoch%10 == 0: 
-                    with open(f'logs/log_training_datatset_{test_dir_name}.txt', 'w') as out:
-                        out.write(f"Epoch {epoch + 1}/{num_epochs}, Loss: {np.mean(dataset_loss):.4f}, Train Acc: {np.mean(dataset_acc):.4f}")
-                torch.save(model.state_dict(), f'checkpoints/model_{test_dir_name}_epoch_{epoch + 1}.pth')
+            num_epochs = 60
+            train_dataset = BatchedGraphDataset(args.train_path, i=0, transform=add_zeros)
+            train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+            # criterion = GCODLoss(len(train_dataset), 6, device)
+            for epoch in tqdm(range(num_epochs), desc=f'Training...'):            
+                # with open(args.train_path, 'r') as f:
+                #     length = len(f.readlines())
+                # dataset_loss = []
+                # dataset_acc = []
+                # dataset_f1 = []
+                # for i in tqdm(range(length//3000 + 1), leave=False):
+                # train_dataset = BatchedGraphDataset(args.train_path, i=i, transform=add_zeros)
+                
+                train_loss = train(train_loader)
+                train_f1, train_acc, _ = evaluate(train_loader, calculate_metrics=True)
+                # dataset_loss.append(train_loss)
+                # dataset_acc.append(train_acc)
+                # dataset_f1.append(train_f1)
+                # del train_dataset, train_loader
+                gc.collect()
+                if (epoch + 1)%10 == 0: 
+                    with open(f'logs/log_training_datatset_{test_dir_name}.txt', 'a') as out:
+                        # out.write(f"Epoch {epoch + 1}/{num_epochs}, Loss: {np.mean(dataset_loss):.4f}, Train Acc: {np.mean(dataset_acc):.4f}, Train F1: {np.mean(dataset_f1):.4f}\n")
+                        out.write(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Train-F1: {train_f1:.4f}\n")
+                torch.save(model.state_dict(), f'/kaggle/working/checkpoints/model_{test_dir_name}_epoch_{epoch + 1}.pth')
         # Evaluate and save test predictions
         
         test_dataset = BatchedGraphDataset(args.test_path, i=0, transform=add_zeros)
         test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-        predictions = evaluate(test_loader, calculate_accuracy=False)
+        predictions = evaluate(test_loader, calculate_metrics=False)
         test_graph_ids = list(range(len(predictions)))  # Generate IDs for graphs
 
         # Save predictions to CSV
@@ -176,28 +189,32 @@ def main(args):
         print(f"Test predictions saved to {output_csv_path}")
 
     else:
-        test_dataset = GraphDataset(args.test_path, transform=add_zeros)
-        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-
+        
         # Train dataset and loader (if train_path is provided)
         if args.train_path:
             train_dataset = GraphDataset(args.train_path, transform=add_zeros)
             train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-
+            criterion = GCODLoss(len(train_dataset), 6, device)
             # Training loop
-            num_epochs = 2
+            num_epochs = 60
             for epoch in range(num_epochs):
                 train_loss = train(train_loader)
-                train_acc, _ = evaluate(train_loader, calculate_accuracy=True)
-                print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-    
-
+                train_f1, train_acc, _ = evaluate(train_loader, calculate_metrics=True)
+                print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Train-F1: {train_f1:.4f}")
+        test_dir_name = os.path.dirname(args.test_path).split(os.sep)[-1]
+        
+        state_dict = torch.load(f'.\checkpoints\model_{test_dir_name}_epoch_60.pth')
+        model = DeepG2SAGEGNN(1, 5, 7)
+        model.load_state_dict(state_dict)
+        model = model.to(device)
+        test_dataset = GraphDataset(args.test_path, transform=add_zeros)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
         # Evaluate and save test predictions
-        predictions = evaluate(test_loader, calculate_accuracy=False)
+        predictions = evaluate(test_loader, calculate_metrics=False)
         test_graph_ids = list(range(len(predictions)))  # Generate IDs for graphs
 
         # Save predictions to CSV
-        test_dir_name = os.path.dirname(args.test_path).split(os.sep)[-1]
+        
         output_csv_path = os.path.join(f"testset_{test_dir_name}.csv")
         output_df = pd.DataFrame({
             "id": test_graph_ids,

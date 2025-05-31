@@ -1,0 +1,6 @@
+Epoch 10/60, Loss: 1.4775, Train Acc: 0.3116, Train-F1: 0.2371
+Epoch 20/60, Loss: 1.3495, Train Acc: 0.2963, Train-F1: 0.2318
+Epoch 30/60, Loss: 1.3027, Train Acc: 0.3763, Train-F1: 0.3148
+Epoch 40/60, Loss: 1.2351, Train Acc: 0.4464, Train-F1: 0.4232
+Epoch 50/60, Loss: 1.2634, Train Acc: 0.4207, Train-F1: 0.3490
+Epoch 60/60, Loss: 1.2423, Train Acc: 0.4366, Train-F1: 0.3803
