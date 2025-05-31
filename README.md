@@ -1,6 +1,6 @@
 # Deep-Learning-Hackaton
 Repository to store the code of the hackaton partecipation of Giuseppe Mancini and Andrea Caminiti for the Deep Learning course at Sapienza Università di Roma.
-![Approach](Hackaton.svg)
+![Approach](Hackaton.png)
 In our approach to handling noisy labels in graph classification tasks, we adopt the GCOD loss function proposed by [Wani et al.](https://arxiv.org/pdf/2412.08419), which is specifically designed to improve model robustness under label noise. Our model architecture is based on a Graph Neural Network (GNN) utilizing SAGE convolutional layers for efficient and scalable message passing. To enhance gradient flow and mitigate the adverse effects of noisy supervision, we incorporate the G2 gradient gating mechanism within the network. Additionally, edge attributes are explicitly integrated into the message passing process, enabling the model to leverage both node connectivity and edge-level information.
 
 Each convolutional layer is followed by a residual connection to stabilize training and improve information propagation across the network. For node features, we use the node degree as a simple yet effective structural descriptor. The model is trained using the Adam optimizer with a learning rate of 1e-3. Training is conducted for a total of 60 epochs on each dataset, ensuring a consistent evaluation protocol across experiments. 
