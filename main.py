@@ -9,7 +9,7 @@ import numpy as np
 from source.loadData import GraphDataset, BatchedGraphDataset
 import os
 import pandas as pd
-from source.loss import NoisyCrossEntropyLoss, GCODLoss
+from source.loss import NoisyCrossEntropyLoss
 from tqdm import tqdm 
 from torch_geometric.utils import degree
 from sklearn.metrics import f1_score
@@ -148,7 +148,7 @@ def main(args):
             num_epochs = 60
             train_dataset = BatchedGraphDataset(args.train_path, i=0, transform=add_zeros)
             train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-            # criterion = GCODLoss(len(train_dataset), 6, device)
+
             for epoch in tqdm(range(num_epochs), desc=f'Training...'):            
                 # with open(args.train_path, 'r') as f:
                 #     length = len(f.readlines())
